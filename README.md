@@ -1,4 +1,4 @@
-# Bazarr_AutoTranslate
+# Bazarr AI Translate
 Script to automatically translate subtitles with Bazarr as a Tautulli Agent when an item is added to Plex or autonomously via cron
 
 Based on my own experience, it is hard to find subtitles for some old/unpopular series/movies, genres or even animes and in most of the cases they have English subtitles embedded or at least online.
@@ -13,7 +13,7 @@ The script first tries to download subtitles in a desired languages (two can be 
 - Plex: refresh metadata of the new added episodes/movies to ensure subtitles are loaded instantly
 You can remove `refresh_plex_item_metadata()` to run without these two and run the script manually or via cron.
 
-## Best Bazarr settigns to optimize this script:
+## Best Bazarr settings to optimize this script:
 - Configure **Embedded Subtitles** Provider
 
 
