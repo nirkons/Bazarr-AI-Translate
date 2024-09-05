@@ -1,118 +1,131 @@
 import requests
+import openai
 
-#Bazarr Information
+# Bazarr Information
 BAZARR_HOSTNAME = "localhost"
 BAZARR_PORT = "6767"
 BAZARR_APIKEY = "<bazarr-api-key>"
-#Plex Information
+# Plex Information
 PLEX_HOSTNAME = "localhost"
 PLEX_PORT = "32400"
 PLEX_TOKEN = "<plex-token>"
-#TautulliInformation
+# Tautulli Information
 TAUTULLI_HOSTNAME = "localhost"
 TAUTULLI_PORT = "8181"
 TAUTULLI_APITOKEN = "<tautulli-api-token>"
-#First language preference code2, in my case Spanish
-FIRST_LANG = 'es'
-#Secondary language preference code2, in my case Latin American Spanish. Leave empty ('') if do not have secondary preference
-SECOND_LANG = 'ea'
+# First language preference code, e.g., Spanish
+FIRST_LANG = 'en'
+# Secondary language preference code, leave empty if not used
+SECOND_LANG = 'es'
+
+# OpenAI API Information
+OPENAI_API_KEY = "<openai-api-key>"  # Add your OpenAI API key here
+openai.api_key = OPENAI_API_KEY
 
 HEADERS = {'Accept': 'application/json', 'X-API-KEY': BAZARR_APIKEY}
 
 
-def translate_episode_subs():
-    #List wanted episodes
-    wanted_episodes_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/wanted?start=0&length=-1",headers=HEADERS)
+def gpt4_translate(text, target_language):
+    """
+    Function to translate the given text using GPT-4 API to the specified language.
+    """
+    prompt = f"Translate the following text to {target_language}: {text}"
+    
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # Replace with the appropriate GPT model you're using
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that translates text."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        translated_text = response.choices[0].message['content'].strip()
+        return translated_text
+    except Exception as e:
+        print(f"Error during translation: {e}")
+        return None
+
+
+def translate_and_replace_subtitles(subs_path, target_language):
+    """
+    Read the subtitle file, translate its content using GPT-4, and save the new subtitle.
+    """
+    try:
+        with open(subs_path, 'r', encoding='utf-8') as subs_file:
+            subtitle_text = subs_file.read()
+
+        translated_subtitle = gpt4_translate(subtitle_text, target_language)
+
+        if translated_subtitle:
+            new_subs_path = subs_path.replace(".srt", f"_{target_language}.srt")
+            with open(new_subs_path, 'w', encoding='utf-8') as new_subs_file:
+                new_subs_file.write(translated_subtitle)
+            print(f"Subtitles translated and saved to {new_subs_path}")
+            return new_subs_path
+        else:
+            print(f"Failed to translate subtitles for {subs_path}")
+            return None
+
+    except FileNotFoundError:
+        print(f"Subtitle file not found: {subs_path}")
+        return None
+
+
+def process_episodes():
+    wanted_episodes_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/wanted?start=0&length=-1", headers=HEADERS)
     if wanted_episodes_resp.status_code == 200:
         wanted_episodes = wanted_episodes_resp.json()
         if wanted_episodes['total'] > 0:
             for episode in wanted_episodes['data']:
-                found = False
                 sonarrSeriesId = episode['sonarrSeriesId']
                 sonarrEpisodeId = episode['sonarrEpisodeId']
-                #Download FIRST_LANG subtitles
-                down_ep_resp_first = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/subtitles?seriesid={sonarrSeriesId}&episodeid={sonarrEpisodeId}&language={FIRST_LANG}&forced=false&hi=false",headers=HEADERS)
-                if down_ep_resp_first.status_code == 204: 
-                    found = True
-                if SECOND_LANG != '':
-                    #Download SECOND_LANG subtitles
-                    down_ep_resp_sec = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/subtitles?seriesid={sonarrSeriesId}&episodeid={sonarrEpisodeId}&language={SECOND_LANG}&forced=false&hi=false",headers=HEADERS)
-                    if down_ep_resp_sec.status_code == 204: 
-                        found = True
-                if not found:
-                    #Download English subtitles
-                    down_ep_en_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/subtitles?seriesid={sonarrSeriesId}&episodeid={sonarrEpisodeId}&language=en&forced=false&hi=false",headers=HEADERS)
-                    if down_ep_en_resp.status_code == 204:
-                        print("EN episode subtitles downloaded/imported for {series} {episode}.".format(series=episode['seriesTitle'],episode=episode['episode_number']))
-                        subs_path = ""
-                        #Get episode history
-                        ep_hist_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/history?start=0&length=-1&episodeid={sonarrEpisodeId}",headers=HEADERS)
-                        if ep_hist_resp.status_code == 200:
-                            ep_history = ep_hist_resp.json()
-                            #Get most recent download
-                            for download in ep_history['data']:
-                                if download['action'] == 1:
-                                    subs_path = download['subtitles_path']
-                                    break
-                        if subs_path != "":
-                            ep_trans_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/subtitles?action=translate&language={FIRST_LANG}&path={subs_path}&type=episode&id={sonarrEpisodeId}&forced=false&hi=false&original_format=true",headers=HEADERS)
-                            if ep_trans_resp.status_code == 204:
-                                print("{series} {episode} subtitles translated to {lang}!".format(series=episode['seriesTitle'],episode=episode['episode_number'],lang=FIRST_LANG))
-                            else:
-                                print("{series} {episode} subtitles translation to {lang} failed!".format(series=episode['seriesTitle'],episode=episode['episode_number'],lang=FIRST_LANG))
-                    else:
-                        print("No EN subtitles downloaded/imported for {series} {episode}.".format(series=episode['seriesTitle'],episode=episode['episode_number']))
+
+                down_ep_en_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/subtitles?seriesid={sonarrSeriesId}&episodeid={sonarrEpisodeId}&language=en&forced=false&hi=false", headers=HEADERS)
+                if down_ep_en_resp.status_code == 204:
+                    print(f"EN subtitles downloaded for {episode['seriesTitle']} {episode['episode_number']}.")
+                    subs_path = ""
+                    ep_hist_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/episodes/history?start=0&length=-1&episodeid={sonarrEpisodeId}", headers=HEADERS)
+                    if ep_hist_resp.status_code == 200:
+                        ep_history = ep_hist_resp.json()
+                        for download in ep_history['data']:
+                            if download['action'] == 1:
+                                subs_path = download['subtitles_path']
+                                break
+                    if subs_path:
+                        translate_and_replace_subtitles(subs_path, FIRST_LANG)
                 else:
-                    print("{series} {episode} subtitles downloaded/imported direcly!".format(series=episode['seriesTitle'],episode=episode['episode_number']))
+                    print(f"No EN subtitles downloaded for {episode['seriesTitle']} {episode['episode_number']}.")
         else:
             print("No episode subtitles wanted.")
-            
-def translate_movie_subs():
-    #List wanted episodes
-    wanted_movies_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/wanted?start=0&length=-1",headers=HEADERS)
+
+
+def process_movies():
+    wanted_movies_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/wanted?start=0&length=-1", headers=HEADERS)
     if wanted_movies_resp.status_code == 200:
         wanted_movies = wanted_movies_resp.json()
         if wanted_movies['total'] > 0:
             for movie in wanted_movies['data']:
-                found = False
                 radarrId = movie['radarrId']
-                #Download FIRST_LANG subtitles
-                down_mov_resp_first = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/subtitles?radarrid={radarrId}&language={FIRST_LANG}&forced=false&hi=false",headers=HEADERS)
-                if down_mov_resp_first.status_code == 204: 
-                    found = True
-                if SECOND_LANG != '':
-                    #Download SECOND_LANG subtitles
-                    down_mov_resp_sec = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/subtitles?radarrid={radarrId}&language={SECOND_LANG}&forced=false&hi=false",headers=HEADERS)
-                    if down_mov_resp_sec.status_code == 204: 
-                        found = True
-                if not found:
-                    #Download English subtitles
-                    down_mov_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/subtitles?radarrid={radarrId}&language=en&forced=false&hi=false",headers=HEADERS)
-                    if down_mov_resp.status_code == 204:
-                        print("EN subtitles downloaded/imported for {movie}.".format(movie=movie['title']))
-                        subs_path = ""
-                        #Get movie history
-                        mov_hist_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/history?start=0&length=-1&radarrid={radarrId}",headers=HEADERS)
-                        if mov_hist_resp.status_code == 200:
-                            mov_history = mov_hist_resp.json()
-                            #Get most recent download
-                            for download in mov_history['data']:
-                                if download['action'] == 1:
-                                    subs_path = download['subtitles_path']
-                                    break
-                        if subs_path != "":
-                            mov_trans_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/subtitles?action=translate&language={FIRST_LANG}&path={subs_path}&type=movie&id={radarrId}&forced=false&hi=false&original_format=true",headers=HEADERS)
-                            if mov_trans_resp.status_code == 204:
-                                print("{movie} subtitles translated to {lang}!".format(movie=movie['title'],lang=FIRST_LANG))
-                            else:
-                                print("{movie} subtitles translation to {lang} failed!".format(movie=movie['title'],lang=FIRST_LANG))
-                    else:
-                        print("No EN subtitles downloaded/imported for {movie}.".format(movie=movie['title']))
+
+                down_mov_en_resp = requests.patch(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/subtitles?radarrid={radarrId}&language=en&forced=false&hi=false", headers=HEADERS)
+                if down_mov_en_resp.status_code == 204:
+                    print(f"EN subtitles downloaded for {movie['title']}.")
+                    subs_path = ""
+                    mov_hist_resp = requests.get(f"http://{BAZARR_HOSTNAME}:{BAZARR_PORT}/api/movies/history?start=0&length=-1&radarrid={radarrId}", headers=HEADERS)
+                    if mov_hist_resp.status_code == 200:
+                        mov_history = mov_hist_resp.json()
+                        for download in mov_history['data']:
+                            if download['action'] == 1:
+                                subs_path = download['subtitles_path']
+                                break
+                    if subs_path:
+                        translate_and_replace_subtitles(subs_path, FIRST_LANG)
                 else:
-                    print("{movie} subtitles downloaded/imported directly!".format(movie=movie['title']))
+                    print(f"No EN subtitles downloaded for {movie['title']}.")
         else:
             print("No movie subtitles wanted.")
-            
+
+
 def refresh_plex_item_metadata():
     last_plex_added_resp = requests.get(f"http://{TAUTULLI_HOSTNAME}:{TAUTULLI_PORT}/api/v2?apikey={TAUTULLI_APITOKEN}&cmd=get_recently_added&count=3")
     if last_plex_added_resp.status_code == 200:
@@ -123,10 +136,12 @@ def refresh_plex_item_metadata():
                 print(f"Metadata refresh for item {item['rating_key']} failed.")
         print("Metadata refreshed for last items added to Plex!")
 
+
 def main():
-    translate_movie_subs()
-    translate_episode_subs()
+    process_movies()
+    process_episodes()
     refresh_plex_item_metadata()
+
 
 if __name__ == "__main__":
     main()
